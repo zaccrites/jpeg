@@ -1,8 +1,14 @@
+"""Perform JPEG compression steps."""
 
+import struct
 from enum import Enum
+from collections import namedtuple
 
 import numpy as np
 from scipy.fftpack import dct, idct
+
+from ycbcr import rgb_to_ycbcr, ycbcr_to_rgb
+from rle import run_length_encode, run_length_decode
 
 
 def iterate_blocks(channel_data):
@@ -27,98 +33,244 @@ def idct2(block):
     return idct(idct(block.T, norm='ortho').T, norm='ortho')
 
 
-class BlockQuantizer(object):
 
-    def __init__(self, block_data, quantization_table):
-        self.block_data = block_data
-        self.quantization_table = quantization_table
+def encode_blocks(channel_data, quantization_table):
+    for block_data in iterate_blocks(channel_data):
+        # Compute the discrete cosine transform of the signed block data.
+        shifted_block = block_data.astype(int) - 128
+        dct_block = dct2(shifted_block.astype(float))
+        # Quantize data to remove high frequency content to improve compression ratio.
+        quantized_block = quantization_table.quantize(dct_block)
+        yield compress_block(quantized_block)
+
+
+def decode_blocks(channel_data, quantization_table):
+    for block_data in decompress_blocks(channel_data):
+        # Undo quantization done in encoding
+        unquantized_block = quantization_table.unquantize(block_data)
+        # Perform inverse discrete cosine transform to get back original block data.
+        idct_block = idct2(unquantized_block.astype(float))
+        # Unshift to get 0-255 pixel data values again
+        unshifted_block = data.astype(int) + 128
+        yield unshifted_block
+
+
+
+
+
+# Zig-zag pattern starting from top-left
+# https://en.wikipedia.org/wiki/JPEG#Entropy_coding
+#
+# Since the blocks are always 8x8, we can hard-code the traversal order
+RLE_TRAVERSAL_ORDER = [
+    0,
+    1, 8,
+    16, 9, 2,
+    3, 10, 17, 24,
+    32, 25, 18, 11, 4,
+    5, 12, 19, 26, 33, 40,
+    48, 41, 34, 27, 20, 13, 6,
+    7, 14, 21, 28, 35, 42, 49, 56,
+    57, 50, 43, 36, 29, 22, 15,
+    23, 30, 37, 44, 51, 58,
+    59, 52, 45, 38, 31,
+    39, 46, 53, 60,
+    61, 54, 47,
+    55, 62,
+    63,
+]
+assert list(sorted(RLE_TRAVERSAL_ORDER)) == list(range(64))
+
+
+def compress_block(block_data):
+    # Linearize the block data for easier indexing
+    block_data = block_data.reshape(64)
+    pixel_data = (block_data[i] for i in RLE_TRAVERSAL_ORDER)
+    yield from run_length_encode(pixel_data)
+
+
+def decompress_blocks(runs):
+
+
+
+
+
+
+# class BlockQuantizer(object):
+
+#     def __init__(self, block_data, quantization_table):
+#         self.block_data = block_data
+#         self.quantization_table = quantization_table
+
+#     @property
+#     def shifted_block(self):
+#         # Make sure that it is signed!
+#         return self.block_data.astype(int) - 128
+
+#     @property
+#     def dct_block(self):
+#         return dct2(self.shifted_block.astype(float))
+
+#     @property
+#     def divided_block(self):
+#         # return self.dct_block
+#         return np.divide(self.dct_block, self.quantization_table)
+
+#     @property
+#     def rounded_block(self):
+#         return self.divided_block.round().astype(int)
+
+#     @property
+#     def multiplied_block(self):
+#         # return self.idct_block
+#         return np.multiply(self.rounded_block, self.quantization_table)
+
+#     @property
+#     def idct_block(self):
+#         return idct2(self.multiplied_block.astype(float))
+
+#     @property
+#     def unshifted_block(self):
+#         return self.idct_block + 128
+
+#     @property
+#     def quantized_block(self):
+#         return self.unshifted_block.astype(int)
+
+#     def quantize(self):
+#         return self.quantized_block
+
+
+
+class QuantizationTable(object):
+
+    def __init__(self, coefficients):
+        if len(coefficients) != 64:
+            raise ValueError('Table must have exactly 64 coefficients')
+        self.coefficients = coefficients
+
+    def quantize(self, block_data):
+        divided_block = np.divide(block_data, self.coefficients)
+        rounded_block = divided_block.round().astype(int)
+        return rounded_block
+
+    def unquantize(self, block_data):
+        return np.multiply(block_data, self.coefficients)
+
+    @classmethod
+    def _create(cls, base_table, quality):
+        # From "RTP Payload Format for JPEG-compressed video" section 4.2, rfc2435
+        # quality must be between 1 and 99
+        if quality < 50:
+            scale_factor = 5000 / quality
+        else:
+            scale_factor = 200 - 2 * quality
+        # The scale factor is a percentage.
+        # At quality=50%, the quantization table is used as given.
+        coefficients = base_table * (scale_factor / 100)
+        return cls(coefficients)
+
+    @classmethod
+    def create_luma(cls, quality):
+        # From JPEG standard, IEC 10918-1
+        base_table = np.array([
+            [16, 11, 10, 16, 124, 140, 151, 161],
+            [12, 12, 14, 19, 126, 158, 160, 155],
+            [14, 13, 16, 24, 140, 157, 169, 156],
+            [14, 17, 22, 29, 151, 187, 180, 162],
+            [18, 22, 37, 56, 168, 109, 103, 177],
+            [24, 35, 55, 64, 181, 104, 113, 192],
+            [49, 64, 78, 87, 103, 121, 120, 101],
+            [72, 92, 95, 98, 112, 100, 103, 199],
+        ])
+        return cls._create(base_table, quality)
+
+    @classmethod
+    def create_chroma(cls, quality):
+        # From JPEG standard, IEC 10918-1
+        base_table = np.array([
+            [17, 18, 24, 47, 99, 99, 99, 99],
+            [18, 21, 26, 66, 99, 99, 99, 99],
+            [24, 26, 56, 99, 99, 99, 99, 99],
+            [47, 66, 99, 99, 99, 99, 99, 99],
+            [99, 99, 99, 99, 99, 99, 99, 99],
+            [99, 99, 99, 99, 99, 99, 99, 99],
+            [99, 99, 99, 99, 99, 99, 99, 99],
+            [99, 99, 99, 99, 99, 99, 99, 99],
+        ])
+        return cls._create(base_table, quality)
+
+
+# def quantize(channel_data, quantization_table):
+#     quantized_data = np.empty_like(channel_data)
+#     for block_slice, block_data in iterate_blocks(channel_data):
+#         # quantizer = BlockQuantizer(block_data, quantization_table)
+#         # quantized_data[block_slice] = quantizer.quantize()
+
+#         # Why?
+#         encoded_data = encode_block(block_data, quantization_table)
+#         decoded_data = decode_block(encoded_data, quantization_table)
+#         quantized_data[block_slice] = decoded_data
+#         import pdb; pdb.set_trace();  # TODO: remove me
+#         pass
+
+#     return quantized_data
+
+
+
+class Jpeg(object):
+
+    def __init__(self, ycbcr_data, luma_table, chroma_table):
+        self.luma_table = luma_table
+        self.chroma_table = chroma_table
+        self.ycbcr_data = ycbcr_data
 
     @property
-    def shifted_block(self):
-        # Make sure that it is signed!
-        return self.block_data.astype(int) - 128
+    def rgb_data(self):
+        return ycbcr_to_rgb(self.ycbcr_data)
 
-    @property
-    def dct_block(self):
-        return dct2(self.shifted_block.astype(float))
+    @classmethod
+    def from_rgb(cls, rgb_data, quality):
+        luma_table = QuantizationTable.create_luma(quality)
+        chroma_table = QuantizationTable.create_chroma(quality)
+        ycbcr_data = rgb_to_ycbcr(rgb_data)
+        return cls(ycbcr_data, luma_table, chroma_table)
 
-    @property
-    def divided_block(self):
-        # return self.dct_block
-        return np.divide(self.dct_block, self.quantization_table)
+    _header_fmt = '< 2H 64B 64B'
 
-    @property
-    def rounded_block(self):
-        return self.divided_block.round().astype(int)
+    @staticmethod
+    def _decode_header(self, data):
+        return struct.unpack(self._header_fmt, data)
 
-    @property
-    def multiplied_block(self):
-        # return self.idct_block
-        return np.multiply(self.rounded_block, self.quantization_table)
+    def _encode_header(self):
+        header_fields = (
+            self.ycbcr_data.shape[0],
+            self.ycbcr_data.shape[1],
+            *self.luma_table.coefficients,
+            *self.chroma_table.coefficients,
+        )
+        return struct.pack(self._header_fmt, header_fields)
 
-    @property
-    def idct_block(self):
-        return idct2(self.multiplied_block.astype(float))
+    # FUTURE: Add Huffman coding to further compress the data.
 
-    @property
-    def unshifted_block(self):
-        return self.idct_block + 128
+    @classmethod
+    def decode(cls, data):
+        xdim, ydim, *tables_data = cls._decode_header(data[:struct.calcsize(_header_fmt)])
+        luma_table = QuantizationTable(tables_data[0:32])
+        chroma_table = QuantizationTable(tables_data[32:64])
 
-    @property
-    def quantized_block(self):
-        return self.unshifted_block.astype(int)
+        tables = [self.luma_table, self.chroma_table, self.chroma_table]
 
-    def quantize(self):
-        return self.quantized_block
+        # TODO
 
-
-# From JPEG standard, IEC 10918-1
-BASE_LUMINANCE_QUANTIZATION_TABLE = np.array([
-    [16, 11, 10, 16, 124, 140, 151, 161],
-    [12, 12, 14, 19, 126, 158, 160, 155],
-    [14, 13, 16, 24, 140, 157, 169, 156],
-    [14, 17, 22, 29, 151, 187, 180, 162],
-    [18, 22, 37, 56, 168, 109, 103, 177],
-    [24, 35, 55, 64, 181, 104, 113, 192],
-    [49, 64, 78, 87, 103, 121, 120, 101],
-    [72, 92, 95, 98, 112, 100, 103, 199],
-])
-BASE_CHROMINANCE_QUANTIZATION_TABLE = np.array([
-    [17, 18, 24, 47, 99, 99, 99, 99],
-    [18, 21, 26, 66, 99, 99, 99, 99],
-    [24, 26, 56, 99, 99, 99, 99, 99],
-    [47, 66, 99, 99, 99, 99, 99, 99],
-    [99, 99, 99, 99, 99, 99, 99, 99],
-    [99, 99, 99, 99, 99, 99, 99, 99],
-    [99, 99, 99, 99, 99, 99, 99, 99],
-    [99, 99, 99, 99, 99, 99, 99, 99],
-])
+    def encode(self):
+        data = bytearray()
+        data.extend(self._encode_header())
+        tables = [self.luma_table, self.chroma_table, self.chroma_table]
+        for i, table in enumerate(tables):
+            channel_data = self.ycbcr_data[:, :, i]
+            for block_data in encode_blocks(channel_data, table):
+                data.extend(block_data)
+        return data
 
 
-class QuantizationTableType(Enum):
-    luminance = 1
-    chrominance = 2
-
-
-def create_quantization_table(quality, table_type):
-    # From "RTP Payload Format for JPEG-compressed video" section 4.2, rfc2435
-    # quality must be between 1 and 99
-    if quality < 50:
-        scale_factor = 5000 / quality
-    else:
-        scale_factor = 200 - 2 * quality
-
-    # The scale factor is a percentage. At quality=50%, the quantization table is used as given.
-    base_table = {
-        QuantizationTableType.luminance: BASE_LUMINANCE_QUANTIZATION_TABLE,
-        QuantizationTableType.chrominance: BASE_CHROMINANCE_QUANTIZATION_TABLE,
-    }[table_type]
-    return base_table * (scale_factor / 100)
-
-
-def quantize(channel_data, quantization_table):
-    quantized_data = np.empty_like(channel_data)
-    for block_slice, block_data in iterate_blocks(channel_data):
-        quantizer = BlockQuantizer(block_data, quantization_table)
-        quantized_data[block_slice] = quantizer.quantize()
-    return quantized_data

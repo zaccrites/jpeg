@@ -1,3 +1,4 @@
+"""Run-length encoding."""
 
 import itertools
 from collections import namedtuple
@@ -37,7 +38,6 @@ def compress_image_data(channel_data):
     ]
     assert list(sorted(traversal_order)) == list(range(64))
 
-    # Iterate over each block
     for block_slice, block_data in iterate_blocks(channel_data):
         # Linearize the block data for easier indexing
         block_data = block_data.reshape(64)

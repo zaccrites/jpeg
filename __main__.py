@@ -3,16 +3,14 @@ import sys
 import os
 import shutil
 import itertools
+import argparse
 
+import imageio
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from scipy import misc
 
-from ycbcr import rgb_to_ycbcr, ycbcr_to_rgb
-from jpeg import quantize, BlockQuantizer, create_quantization_table, QuantizationTableType
-from rle import compress_image_data
-from huffman import huffman_encode
+from jpeg import Jpeg
 
 
 def iter_channels(ycbcr_img_data):
@@ -22,44 +20,64 @@ def iter_channels(ycbcr_img_data):
         yield channel_index, channel_name, channel_data
 
 
-def main(img_path, quality):
+def get_image_data(path):
+    data = imageio.imread(path)
+    xdim, ydim, num_channels = data.shape
+
+    if num_channels < 3:
+        raise RuntimeError('Image must have all three color channels.')
+    if xdim % 8 != 0 or ydim % 8 != 0:
+        raise RuntimeError('Image dimensions must be a multiple of 8')
+
+    # Remove alpha channel, if one exists
+    return data[:, :, :3]
+
+
+def run(args):
     # Read in RGB data and convert to YCbCr
     print('Reading source image')
-    rgb_img_data = misc.imread(img_path)
-    ycbcr_img_data = rgb_to_ycbcr(rgb_img_data)
+    rgb_img_data = get_image_data(args.img_path)
+    # ycbcr_img_data = rgb_to_ycbcr(rgb_img_data)
 
-    print('Creating quantization tables')
-    luminance_quantization_table = create_quantization_table(quality, QuantizationTableType.luminance)
-    chrominance_quantization_table = create_quantization_table(quality, QuantizationTableType.chrominance)
+    print('Encoding data as JPEG')
+    jpeg = Jpeg.from_rgb(rgb_img_data, args.quality)
 
-    # Quantize YCbCr data
-    print('Quantizing YCbCr data at {}% quality'.format(quality))
-    quantized_ycbcr_img_data = np.empty_like(ycbcr_img_data)
-    channel_quantization_tables = [luminance_quantization_table, chrominance_quantization_table, chrominance_quantization_table]
-    for i, quantization_table in enumerate(channel_quantization_tables):
-        channel_data = ycbcr_img_data[:, :, i]
-        quantized_ycbcr_img_data[:, :, i] = quantize(channel_data, quantization_table)
 
-    # Convert back to RGB and compare with the original image
-    print('Converting back to RGB')
-    final_rgb_img_data = ycbcr_to_rgb(quantized_ycbcr_img_data)
+    jpeg.encode()
+
+
+    # print('Creating quantization tables')
+    # luminance_quantization_table = create_quantization_table(args.quality, QuantizationTableType.luminance)
+    # chrominance_quantization_table = create_quantization_table(args.quality, QuantizationTableType.chrominance)
+
+    # # Quantize YCbCr data
+    # print(f'Quantizing YCbCr data at {args.quality}% quality')
+    # quantized_ycbcr_img_data = np.empty_like(ycbcr_img_data)
+    # channel_quantization_tables = [luminance_quantization_table, chrominance_quantization_table, chrominance_quantization_table]
+    # for i, quantization_table in enumerate(channel_quantization_tables):
+    #     channel_data = ycbcr_img_data[:, :, i]
+    #     quantized_ycbcr_img_data[:, :, i] = quantize(channel_data, quantization_table)
+
+    # # Convert back to RGB and compare with the original image
+    # print('Converting back to RGB')
+    # final_rgb_img_data = ycbcr_to_rgb(quantized_ycbcr_img_data)
 
     # Clean output directory
-    output_dir = 'quality{}'.format(quality)
+    output_dir = f'output/quality{args.quality}'
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    copy_source_image(img_path, output_dir)
+    copy_source_image(args.img_path, output_dir)
     save_split_ycbcr_plots(ycbcr_img_data, output_dir)
     save_difference_plots(ycbcr_img_data, quantized_ycbcr_img_data, output_dir)
 
     save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir)
-    save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir, slice_coords=((0,200),   (0,200)))
-    save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir, slice_coords=((150,250), (250,350)))
+    # save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir, slice_coords=((0,200),   (0,200)))
+    # save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir, slice_coords=((150,250), (250,350)))
 
-    y_img_data = ycbcr_img_data[:, :, 0]
-    save_quantization_process_steps(y_img_data, luminance_quantization_table, output_dir)
+    # y_img_data = ycbcr_img_data[:, :, 0]
+    # save_quantization_process_steps(y_img_data, luminance_quantization_table, output_dir)
 
     save_output_image(final_rgb_img_data, output_dir)
 
@@ -143,7 +161,7 @@ def save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir, slice_co
 def save_output_image(rgb_img_data, output_dir):
     print('Saving output image')
     filename = os.path.join(output_dir, 'output_image.png')
-    misc.imsave(filename, rgb_img_data)
+    imageio.imsave(filename, rgb_img_data)
 
 
 def save_compression_stats(quantized_ycbcr_img_data, output_dir):
@@ -202,51 +220,57 @@ def scale_block(block_data, scale_factor):
     return large_block_data
 
 
-def save_quantization_process_steps(channel_data, quantization_table, output_dir):
-    print('Saving quantization process steps')
-    block_data = channel_data[136:136+8, 198:198+8]
-    quantizer = BlockQuantizer(block_data, quantization_table)
+# def save_quantization_process_steps(channel_data, quantization_table, output_dir):
+#     print('Saving quantization process steps')
+#     block_data = channel_data[136:136+8, 198:198+8]
+#     quantizer = BlockQuantizer(block_data, quantization_table)
 
-    # Save sample input image
-    SCALE_FACTOR = 64
-    filename = os.path.join(output_dir, 'quantization_process_steps_input_image.png')
-    misc.imsave(filename, scale_block(block_data, SCALE_FACTOR))
+#     # Save sample input image
+#     SCALE_FACTOR = 64
+#     filename = os.path.join(output_dir, 'quantization_process_steps_input_image.png')
+#     imageio.imsave(filename, scale_block(block_data, SCALE_FACTOR))
 
-    # Setup numpy printing
-    def float_formatter(x):
-        raw = '{:.2f}'.format(x)
-        return raw.rjust(len('-999.99'))
-    np.set_printoptions(formatter={'float_kind': float_formatter})
+#     # Setup numpy printing
+#     def float_formatter(x):
+#         raw = '{:.2f}'.format(x)
+#         return raw.rjust(len('-999.99'))
+#     np.set_printoptions(formatter={'float_kind': float_formatter})
 
-    steps_to_write = [
-        ('Input Block', block_data),
-        ('Shifted Block', quantizer.shifted_block),
-        ('DCT-II Coefficients', quantizer.dct_block),
-        ('Quantization Table', quantization_table),
-        ('Divided Coefficients', quantizer.divided_block),
-        ('Quantized', quantizer.rounded_block),
-        ('DCT-III Coefficients', quantizer.multiplied_block),
-        ('Output Shifted Block', quantizer.idct_block),
-        ('Output Block', quantizer.quantized_block),
-    ]
+#     steps_to_write = [
+#         ('Input Block', block_data),
+#         ('Shifted Block', quantizer.shifted_block),
+#         ('DCT-II Coefficients', quantizer.dct_block),
+#         ('Quantization Table', quantization_table),
+#         ('Divided Coefficients', quantizer.divided_block),
+#         ('Quantized', quantizer.rounded_block),
+#         ('DCT-III Coefficients', quantizer.multiplied_block),
+#         ('Output Shifted Block', quantizer.idct_block),
+#         ('Output Block', quantizer.quantized_block),
+#     ]
 
-    filename = os.path.join(output_dir, 'quantization_process_steps.txt')
-    with open(filename, 'w') as f:
-        for name, data in steps_to_write:
-            print(name, file=f)
-            print(data, file=f)
-            print('\n', file=f)
+#     filename = os.path.join(output_dir, 'quantization_process_steps.txt')
+#     with open(filename, 'w') as f:
+#         for name, data in steps_to_write:
+#             print(name, file=f)
+#             print(data, file=f)
+#             print('\n', file=f)
 
-    # Save sample output image
-    filename = os.path.join(output_dir, 'quantization_process_steps_output_image.png')
-    misc.imsave(filename, scale_block(quantizer.quantized_block, SCALE_FACTOR))
+#     # Save sample output image
+#     filename = os.path.join(output_dir, 'quantization_process_steps_output_image.png')
+#     imageio.imsave(filename, scale_block(quantizer.quantized_block, SCALE_FACTOR))
 
 
 # From the output directory:
 # python ..\implementation ..\images\Pluto.png <quality>
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('img_path')
+    parser.add_argument('quality', type=int)
+    # parser.add_argument('output_dir')  # TODO
+    args = parser.parse_args()
+    return run(args)
+
+
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print('Specify image path and quality level between 1 and 99')
-        sys.exit(1)
-    main(img_path=sys.argv[1], quality=int(sys.argv[2]))
+    sys.exit(main())
