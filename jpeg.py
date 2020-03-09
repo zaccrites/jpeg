@@ -8,154 +8,21 @@ import numpy as np
 from scipy.fftpack import dct, idct
 
 from ycbcr import rgb_to_ycbcr, ycbcr_to_rgb
-from rle import run_length_encode, run_length_decode
-
-
-def iterate_blocks(channel_data):
-    """Iterate over the channel data in 8x8 blocks."""
-    xres, yres = channel_data.shape
-    assert xres % 8 == 0
-    assert yres % 8 == 0
-
-    for block_x in range(xres // 8):
-        for block_y in range(yres // 8):
-            block_slice = np.index_exp[(block_x)*8:(block_x+1)*8, (block_y)*8:(block_y+1)*8]
-            block_data = channel_data[block_slice]
-            yield block_slice, block_data
-
-
-# http://stackoverflow.com/questions/34890585/in-scipy-why-doesnt-idctdcta-equal-to-a
-def dct2(block):
-    return dct(dct(block.T, norm='ortho').T, norm='ortho')
-
-
-def idct2(block):
-    return idct(idct(block.T, norm='ortho').T, norm='ortho')
-
-
-
-def encode_blocks(channel_data, quantization_table):
-    for block_data in iterate_blocks(channel_data):
-        # Compute the discrete cosine transform of the signed block data.
-        shifted_block = block_data.astype(int) - 128
-        dct_block = dct2(shifted_block.astype(float))
-        # Quantize data to remove high frequency content to improve compression ratio.
-        quantized_block = quantization_table.quantize(dct_block)
-        yield compress_block(quantized_block)
-
-
-def decode_blocks(channel_data, quantization_table):
-    for block_data in decompress_blocks(channel_data):
-        # Undo quantization done in encoding
-        unquantized_block = quantization_table.unquantize(block_data)
-        # Perform inverse discrete cosine transform to get back original block data.
-        idct_block = idct2(unquantized_block.astype(float))
-        # Unshift to get 0-255 pixel data values again
-        unshifted_block = data.astype(int) + 128
-        yield unshifted_block
-
-
-
-
-
-# Zig-zag pattern starting from top-left
-# https://en.wikipedia.org/wiki/JPEG#Entropy_coding
-#
-# Since the blocks are always 8x8, we can hard-code the traversal order
-RLE_TRAVERSAL_ORDER = [
-    0,
-    1, 8,
-    16, 9, 2,
-    3, 10, 17, 24,
-    32, 25, 18, 11, 4,
-    5, 12, 19, 26, 33, 40,
-    48, 41, 34, 27, 20, 13, 6,
-    7, 14, 21, 28, 35, 42, 49, 56,
-    57, 50, 43, 36, 29, 22, 15,
-    23, 30, 37, 44, 51, 58,
-    59, 52, 45, 38, 31,
-    39, 46, 53, 60,
-    61, 54, 47,
-    55, 62,
-    63,
-]
-assert list(sorted(RLE_TRAVERSAL_ORDER)) == list(range(64))
-
-
-def compress_block(block_data):
-    # Linearize the block data for easier indexing
-    block_data = block_data.reshape(64)
-    pixel_data = (block_data[i] for i in RLE_TRAVERSAL_ORDER)
-    yield from run_length_encode(pixel_data)
-
-
-def decompress_blocks(runs):
-
-
-
-
-
-
-# class BlockQuantizer(object):
-
-#     def __init__(self, block_data, quantization_table):
-#         self.block_data = block_data
-#         self.quantization_table = quantization_table
-
-#     @property
-#     def shifted_block(self):
-#         # Make sure that it is signed!
-#         return self.block_data.astype(int) - 128
-
-#     @property
-#     def dct_block(self):
-#         return dct2(self.shifted_block.astype(float))
-
-#     @property
-#     def divided_block(self):
-#         # return self.dct_block
-#         return np.divide(self.dct_block, self.quantization_table)
-
-#     @property
-#     def rounded_block(self):
-#         return self.divided_block.round().astype(int)
-
-#     @property
-#     def multiplied_block(self):
-#         # return self.idct_block
-#         return np.multiply(self.rounded_block, self.quantization_table)
-
-#     @property
-#     def idct_block(self):
-#         return idct2(self.multiplied_block.astype(float))
-
-#     @property
-#     def unshifted_block(self):
-#         return self.idct_block + 128
-
-#     @property
-#     def quantized_block(self):
-#         return self.unshifted_block.astype(int)
-
-#     def quantize(self):
-#         return self.quantized_block
+# from rle import run_length_encode, run_length_decode
 
 
 
 class QuantizationTable(object):
 
     def __init__(self, coefficients):
-        if len(coefficients) != 64:
-            raise ValueError('Table must have exactly 64 coefficients')
+        if coefficients.shape != (8, 8):
+            raise ValueError('Table must be of shape 8x8')
         self.coefficients = coefficients
 
     def quantize(self, block_data):
         divided_block = np.divide(block_data, self.coefficients)
         rounded_block = divided_block.round().astype(int)
-        return rounded_block
-
-    def unquantize(self, block_data):
-        return np.multiply(block_data, self.coefficients)
+        return np.multiply(rounded_block, self.coefficients)
 
     @classmethod
     def _create(cls, base_table, quality):
@@ -201,33 +68,12 @@ class QuantizationTable(object):
         return cls._create(base_table, quality)
 
 
-# def quantize(channel_data, quantization_table):
-#     quantized_data = np.empty_like(channel_data)
-#     for block_slice, block_data in iterate_blocks(channel_data):
-#         # quantizer = BlockQuantizer(block_data, quantization_table)
-#         # quantized_data[block_slice] = quantizer.quantize()
-
-#         # Why?
-#         encoded_data = encode_block(block_data, quantization_table)
-#         decoded_data = decode_block(encoded_data, quantization_table)
-#         quantized_data[block_slice] = decoded_data
-#         import pdb; pdb.set_trace();  # TODO: remove me
-#         pass
-
-#     return quantized_data
-
-
-
 class Jpeg(object):
 
     def __init__(self, ycbcr_data, luma_table, chroma_table):
         self.luma_table = luma_table
         self.chroma_table = chroma_table
         self.ycbcr_data = ycbcr_data
-
-    @property
-    def rgb_data(self):
-        return ycbcr_to_rgb(self.ycbcr_data)
 
     @classmethod
     def from_rgb(cls, rgb_data, quality):
@@ -236,41 +82,91 @@ class Jpeg(object):
         ycbcr_data = rgb_to_ycbcr(rgb_data)
         return cls(ycbcr_data, luma_table, chroma_table)
 
-    _header_fmt = '< 2H 64B 64B'
-
-    @staticmethod
-    def _decode_header(self, data):
-        return struct.unpack(self._header_fmt, data)
-
-    def _encode_header(self):
-        header_fields = (
-            self.ycbcr_data.shape[0],
-            self.ycbcr_data.shape[1],
-            *self.luma_table.coefficients,
-            *self.chroma_table.coefficients,
-        )
-        return struct.pack(self._header_fmt, header_fields)
-
-    # FUTURE: Add Huffman coding to further compress the data.
-
-    @classmethod
-    def decode(cls, data):
-        xdim, ydim, *tables_data = cls._decode_header(data[:struct.calcsize(_header_fmt)])
-        luma_table = QuantizationTable(tables_data[0:32])
-        chroma_table = QuantizationTable(tables_data[32:64])
-
+    def get_quantized_ycbcr_data(self):
+        quantized_data = np.empty_like(self.ycbcr_data)
         tables = [self.luma_table, self.chroma_table, self.chroma_table]
-
-        # TODO
-
-    def encode(self):
-        data = bytearray()
-        data.extend(self._encode_header())
-        tables = [self.luma_table, self.chroma_table, self.chroma_table]
-        for i, table in enumerate(tables):
+        for i, quantization_table in enumerate(tables):
             channel_data = self.ycbcr_data[:, :, i]
-            for block_data in encode_blocks(channel_data, table):
-                data.extend(block_data)
-        return data
+            quantized_data[:, :, i] = quantize_channel(channel_data, quantization_table)
+        return quantized_data
 
+    @property
+    def compressed_size(self):
+        # TODO: Calculate run-length encoding size.
+        # FUTURE: Add Huffman coding to further compress
+        raise NotImplementedError
+
+
+def quantize_channel(channel_data, quantization_table):
+    quantized_data = np.empty_like(channel_data)
+    for block_slice, block_data in iterate_blocks(channel_data):
+        # Shift [0,255] pixel data to signed [-128,127]
+        shifted_block = block_data.astype(int) - 128
+        # Compute the 2D discrete cosine transform to get frequency domain coefficients
+        dct_block = dct2(shifted_block.astype(float))
+        # Quantize frequency coefficients according to the table
+        quantized_block = quantization_table.quantize(dct_block)
+        # Compute inverse DCT to get back signed pixel data
+        idct_block = idct2(quantized_block.astype(float))
+        # Shift back into unsigned range
+        unshifted_block = idct_block.astype(int) + 128
+        quantized_data[block_slice] = unshifted_block
+    return quantized_data
+
+
+def iterate_blocks(channel_data):
+    """Iterate over the channel data in 8x8 blocks."""
+    xres, yres = channel_data.shape
+    assert xres % 8 == 0
+    assert yres % 8 == 0
+
+    for block_x in range(xres // 8):
+        for block_y in range(yres // 8):
+            block_slice = np.index_exp[(block_x)*8:(block_x+1)*8, (block_y)*8:(block_y+1)*8]
+            block_data = channel_data[block_slice]
+            yield block_slice, block_data
+
+
+# http://stackoverflow.com/questions/34890585/in-scipy-why-doesnt-idctdcta-equal-to-a
+def dct2(block):
+    return dct(dct(block.T, norm='ortho').T, norm='ortho')
+
+
+def idct2(block):
+    return idct(idct(block.T, norm='ortho').T, norm='ortho')
+
+
+
+
+
+# Run = namedtuple('Run', ['value', 'length'])
+
+
+# def run_length_encode(data):
+#     for key, values in itertools.groupby(data):
+#         yield Run(value=key, length=len(list(values)))
+
+
+# # Zig-zag pattern starting from top-left
+# # https://en.wikipedia.org/wiki/JPEG#Entropy_coding
+# #
+# # Since the blocks are always 8x8, we can hard-code the traversal order
+# RLE_TRAVERSAL_ORDER = [
+#     0,
+#     1, 8,
+#     16, 9, 2,
+#     3, 10, 17, 24,
+#     32, 25, 18, 11, 4,
+#     5, 12, 19, 26, 33, 40,
+#     48, 41, 34, 27, 20, 13, 6,
+#     7, 14, 21, 28, 35, 42, 49, 56,
+#     57, 50, 43, 36, 29, 22, 15,
+#     23, 30, 37, 44, 51, 58,
+#     59, 52, 45, 38, 31,
+#     39, 46, 53, 60,
+#     61, 54, 47,
+#     55, 62,
+#     63,
+# ]
+# assert list(sorted(RLE_TRAVERSAL_ORDER)) == list(range(64))
 

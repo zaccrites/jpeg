@@ -43,7 +43,10 @@ def run(args):
     jpeg = Jpeg.from_rgb(rgb_img_data, args.quality)
 
 
-    jpeg.encode()
+    from ycbcr import ycbcr_to_rgb
+    ycbcr_img_data = jpeg.ycbcr_data
+    quantized_ycbcr_img_data = jpeg.get_quantized_ycbcr_data()
+    final_rgb_img_data = ycbcr_to_rgb(quantized_ycbcr_img_data)
 
 
     # print('Creating quantization tables')
@@ -69,7 +72,8 @@ def run(args):
     os.makedirs(output_dir)
 
     copy_source_image(args.img_path, output_dir)
-    save_split_ycbcr_plots(ycbcr_img_data, output_dir)
+    save_split_ycbcr_plots('source', ycbcr_img_data, output_dir)
+    save_split_ycbcr_plots('quantized', quantized_ycbcr_img_data, output_dir)
     save_difference_plots(ycbcr_img_data, quantized_ycbcr_img_data, output_dir)
 
     save_comparison_plots(rgb_img_data, final_rgb_img_data, output_dir)
@@ -81,7 +85,7 @@ def run(args):
 
     save_output_image(final_rgb_img_data, output_dir)
 
-    save_compression_stats(quantized_ycbcr_img_data, output_dir)
+    # save_compression_stats(quantized_ycbcr_img_data, output_dir)
 
     print('Done!')
 
@@ -92,14 +96,14 @@ def copy_source_image(img_path, output_dir):
     shutil.copyfile(img_path, dest_path)
 
 
-def save_split_ycbcr_plots(ycbcr_img_data, output_dir):
+def save_split_ycbcr_plots(name, ycbcr_img_data, output_dir):
     """Split each channel into its own plot.
 
     Dark areas indicate a lack of that color component (or overall darkness,
     for luminance), while lighter areas indicate an abundance of that color
     component (or an overall bright image, for luminance).
     """
-    print('Saving split YCbCr plots')
+    print(f'Saving split YCbCr plots ({name})')
     fig = plt.figure(figsize=(16, 6))
 
     for channel_index, channel_name, channel_data in iter_channels(ycbcr_img_data):
@@ -107,7 +111,7 @@ def save_split_ycbcr_plots(ycbcr_img_data, output_dir):
         ax.set_title(channel_name)
         plt.imshow(channel_data, cmap='Greys_r')
 
-    filename = os.path.join(output_dir, 'split_ycbcr_plots.png')
+    filename = os.path.join(output_dir, f'{name}_split_ycbcr_plots.png')
     plt.savefig(filename)
 
 
@@ -164,52 +168,52 @@ def save_output_image(rgb_img_data, output_dir):
     imageio.imsave(filename, rgb_img_data)
 
 
-def save_compression_stats(quantized_ycbcr_img_data, output_dir):
-    print('Computing compression stats')
-    filename = os.path.join(output_dir, 'compression_stats.txt')
-    with open(filename, 'w') as f:
+# def save_compression_stats(quantized_ycbcr_img_data, output_dir):
+#     print('Computing compression stats')
+#     filename = os.path.join(output_dir, 'compression_stats.txt')
+#     with open(filename, 'w') as f:
 
-        # Uncompressed, the file requires one byte per channel per pixel.
-        uncompressed_size = 3 * quantized_ycbcr_img_data.size
-        fmt = 'Uncompressed Size: {:.2f} kB \n'
-        print(fmt.format(uncompressed_size / 1024), file=f)
+#         # Uncompressed, the file requires one byte per channel per pixel.
+#         uncompressed_size = 3 * quantized_ycbcr_img_data.size
+#         fmt = 'Uncompressed Size: {:.2f} kB \n'
+#         print(fmt.format(uncompressed_size / 1024), file=f)
 
-        run_length_encoded_size = 0
-        huffman_coded_size = 0
+#         run_length_encoded_size = 0
+#         huffman_coded_size = 0
 
-        for channel_index, channel_name, channel_data in iter_channels(quantized_ycbcr_img_data):
-            # For run-length encoding, each run requires one byte for the value
-            # and one byte for the length of the run.
-            run_length_encoded_data = []
-            for run in compress_image_data(channel_data):
-                run_length_encoded_data.append(run.value)
-                run_length_encoded_data.append(run.length)
-            run_length_encoded_size += len(run_length_encoded_data)
+#         for channel_index, channel_name, channel_data in iter_channels(quantized_ycbcr_img_data):
+#             # For run-length encoding, each run requires one byte for the value
+#             # and one byte for the length of the run.
+#             run_length_encoded_data = []
+#             for run in compress_image_data(channel_data):
+#                 run_length_encoded_data.append(run.value)
+#                 run_length_encoded_data.append(run.length)
+#             run_length_encoded_size += len(run_length_encoded_data)
 
-            # Huffman coding goes further, assigning a variable-length code
-            # to each value. More common values will receive shorter codes,
-            # which can save space.
-            huffman_code_table, huffman_coded_data = huffman_encode(run_length_encoded_data)
+#             # Huffman coding goes further, assigning a variable-length code
+#             # to each value. More common values will receive shorter codes,
+#             # which can save space.
+#             huffman_code_table, huffman_coded_data = huffman_encode(run_length_encoded_data)
 
-            # Each Huffman-coded value takes up only as many bits as the code used
-            # to represent it.
-            huffman_coded_size += sum(len(encoded_value) for encoded_value in huffman_coded_data) / 8
+#             # Each Huffman-coded value takes up only as many bits as the code used
+#             # to represent it.
+#             huffman_coded_size += sum(len(encoded_value) for encoded_value in huffman_coded_data) / 8
 
-            # The total Huffman encoding size must store the code table with it.
-            # Each entry in the table requires one byte for the associated value,
-            # one byte for the length of the code in bits, and then the code itself.
-            huffman_code_table_size = 2 * len(huffman_code_table)
-            for value, huffman_code in huffman_code_table.items():
-                huffman_code_table_size += len(huffman_code) / 8
-            huffman_coded_size += huffman_code_table_size
+#             # The total Huffman encoding size must store the code table with it.
+#             # Each entry in the table requires one byte for the associated value,
+#             # one byte for the length of the code in bits, and then the code itself.
+#             huffman_code_table_size = 2 * len(huffman_code_table)
+#             for value, huffman_code in huffman_code_table.items():
+#                 huffman_code_table_size += len(huffman_code) / 8
+#             huffman_coded_size += huffman_code_table_size
 
-        fmt = '{} Encoded Size: {:.2f} kB   (compression ratio = {:.3f})'
+#         fmt = '{} Encoded Size: {:.2f} kB   (compression ratio = {:.3f})'
 
-        compression_ratio = uncompressed_size / run_length_encoded_size
-        print(fmt.format('Run-length', run_length_encoded_size / 1024, compression_ratio), file=f)
+#         compression_ratio = uncompressed_size / run_length_encoded_size
+#         print(fmt.format('Run-length', run_length_encoded_size / 1024, compression_ratio), file=f)
 
-        compression_ratio = uncompressed_size / huffman_coded_size
-        print(fmt.format('   Huffman', huffman_coded_size / 1024, compression_ratio), file=f)
+#         compression_ratio = uncompressed_size / huffman_coded_size
+#         print(fmt.format('   Huffman', huffman_coded_size / 1024, compression_ratio), file=f)
 
 
 def scale_block(block_data, scale_factor):
