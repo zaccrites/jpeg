@@ -2,6 +2,11 @@
 # JPEG Encoder
 
 A JPEG encoder implemented in Python.
+The script does not generate usable `.jpg` files in truth,
+but it will perform the transforms needed to convert e.g. a PNG
+image to JPEG at a requested quality level, showing the difference
+in each luma and chroma channel from the original source image
+and the JPEG-ified output.
 
 ## Encoding
 
