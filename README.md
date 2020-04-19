@@ -3,6 +3,8 @@
 
 A JPEG encoder implemented in Python
 
+![Q=20 Comparison](images/quality20/comparison_plots__all.png "Q=20 Comparison")
+
 The script does not generate usable `.jpg` files in truth,
 but it will perform the transforms needed to convert e.g. a PNG
 image to JPEG at a requested quality level, showing the difference
@@ -30,3 +32,38 @@ High frequency content is less noticeable than low frequency content,
 so it can be removed with little noticeable impact on many images
 (notably [photographs](https://en.wikipedia.org/wiki/Joint_Photographic_Experts_Group)).
 By employing [run-length encoding](https://en.wikipedia.org/wiki/Run-length_encoding) and traversing DCT coefficients from lowest frequency to highest, a long string of zeroes in the high frequency section may be represented compactly. Applying a further layer of [Huffman coding](https://en.wikipedia.org/wiki/Huffman_coding) can further compress the data.
+
+
+# Results
+
+## Quality = 90
+
+![Q=90 Output](images/quality90/output_image.png "Q=90 Output")
+
+![Q=90 Comparison](images/quality90/comparison_plots__all.png "Q=90 Output")
+
+![Q=90 Difference Plots](images/quality90/difference_plots.png "Q=90 Difference Plots")
+
+## Quality = 50
+
+![Q=50 Output](images/quality50/output_image.png "Q=50 Output")
+
+![Q=50 Comparison](images/quality50/comparison_plots__all.png "Q=50 Output")
+
+![Q=50 Difference Plots](images/quality50/difference_plots.png "Q=50 Difference Plots")
+
+## Quality = 20
+
+![Q=20 Output](images/quality20/output_image.png "Q=20 Output")
+
+![Q=20 Comparison](images/quality20/comparison_plots__all.png "Q=20 Output")
+
+![Q=20 Difference Plots](images/quality20/difference_plots.png "Q=20 Difference Plots")
+
+## Quality = 10
+
+![Q=10 Output](images/quality10/output_image.png "Q=10 Output")
+
+![Q=10 Comparison](images/quality10/comparison_plots__all.png "Q=10 Output")
+
+![Q=10 Difference Plots](images/quality10/difference_plots.png "Q=10 Difference Plots")
